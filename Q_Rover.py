@@ -70,12 +70,28 @@ import pickle
 # 
 # =============================================================================
 
+def progressBar(epoch, value, endvalue, bar_length=20):
 
-def preprocess_data_files():
+        percent = float(value) / endvalue
+        arrow = '-' * int(round(percent * bar_length)-1) + '>'
+        spaces = ' ' * (bar_length - len(arrow))
+
+        sys.stdout.write("\r Epoch: {0} Percent: [{1}] {2}%".format(epoch, arrow + spaces, int(round(percent * 100))))
+        sys.stdout.flush()
+
+
+
+def preprocess_data_files(path,new_path):
     '''Takes data from Q_agent, changes to grayscale, puts new file in 'path' '''
     
-    path='/home/mpcr/Adam_python/Rover/Q_agent_data_resized'
+    #path='/home/mpcr/Adam_python/Rover/Q_agent_data'
+    #new_path=path+'_resized'
     
+# =============================================================================
+#     if os.path.isdir(path)==False or os.path.isdir(new_path)==False:
+#         raise ValueError(f'At least one path does not exist: {path} or {new_path}')
+#     
+# =============================================================================
     Q_data_files=os.listdir(path)
     
     for file in Q_data_files:
@@ -103,11 +119,7 @@ def preprocess_data_files():
             hf.create_dataset("X",  data=temp_data_x_new)
             hf.create_dataset("Y",  data=temp_data_y_new)
         
-        
-        
-        
-        
-    
+
         
         #loaded_h5.create_dataset('X',data=temp_data_x_new)
 
@@ -126,7 +138,7 @@ def get_supervised_rewards(s_net,path):
     
     
     binarizer=preprocessing.LabelBinarizer()
-    binarizer.fit([-1.0,0.0,1.0,2.0])
+    binarizer.fit([0.0,1.0,2.0,3.0])
     s_net=s_net
     path=path
     filenames=os.listdir(path);filenames=np.array(filenames)
@@ -195,7 +207,7 @@ class MDP_dataset_new(Dataset):
         self.frame_accum_w_end=np.array(frame_accum_w_end)
         
         self.total_frames=self.frame_accum[-1]-len(self.filenames)
-
+        self.progress_counter=0
 # =============================================================================
 #     def get_rewards(self):
 #         Q_data_path='/home/mpcr/Adam_python/Rover/Q_agent_data_resized/'
@@ -223,8 +235,8 @@ class MDP_dataset_new(Dataset):
         #pdb.set_trace()
         
         file_location,index_in_file=self.get_frame_location(index=index,frame_array=frame_array)
-
-        f=h5py.File('/home/mpcr/Adam_python/Rover/Q_agent_data_resized/' + self.filenames[file_location], 'r')
+        #pdb.set_trace()
+        f=h5py.File(self.path + self.filenames[file_location], 'r')
         #a_group_key = list(f.keys())[0]
         
         X=f['X'][index_in_file]
@@ -234,7 +246,8 @@ class MDP_dataset_new(Dataset):
         #X=resize(X,(224,224,3))
         X=X[...,np.newaxis]
         X=np.transpose(X,(2,0,1))
-
+        progressBar('Loading Replay',self.progress_counter//2,self.replay_size)
+        self.progress_counter+=1
         
         return X,label
 
@@ -252,9 +265,9 @@ class MDP_dataset_new(Dataset):
     def get_reward(self,action,label):
         
         if action==label:
-            return 1
+            return 3
         else:
-            return 0
+            return -.8
         
     
     def __len__(self):
@@ -462,16 +475,16 @@ class Q_Agent():
     def epsilon_greedy(self,x):
         #small number of actions means 1.0 epsilon gives 25% chance to each action
         if np.random.rand()<self.epsilon:
-            x=torch.tensor(np.random.rand(4))
+            x=torch.tensor(np.random.rand(4)).view((1,4))
         else:
             
             if self.run_type=='train':
                 self.train()
             else:
-                self.eval()
+                self.DQN.eval()
             
 
-            x=self.forward(x)
+            x=self.DQN.forward(x)
         
         return x
 
@@ -510,13 +523,14 @@ class Agent_Dataset(Dataset):
         return next(iter(self.data_loader))
     
     def update_target(self):
-        self.agent_target=copy.deepcopy(agent)
+        self.agent_target=copy.deepcopy(self.agent)
         self.agent_target.cuda(1)
         return None
     
     
     def format_Q_data(self):
-        #pdb.set_trace()
+        
+        pdb.set_trace()
         self.agent.run_type='eval'
         self.agent.DQN.eval()
         self.agent_target.DQN.eval()
@@ -538,7 +552,7 @@ class Agent_Dataset(Dataset):
         
         total_states=len(states)
         
-        batch_size_Q=40
+        batch_size_Q=50
         
         total_iter=total_states//batch_size_Q
         leftover=total_states%batch_size_Q
@@ -547,7 +561,7 @@ class Agent_Dataset(Dataset):
         #pdb.set_trace()
         for i in range(total_iter):
             states_gpu=states[i*batch_size_Q:(i+1)*batch_size_Q].float().cuda()
-            Q_values=Q_values+list(self.agent.DQN.forward(states_gpu))
+            Q_values=Q_values+list(self.agent.DQN.forward(states_gpu).detach().cpu())
         
 # =============================================================================
 #         states_gpu=states[(i+1)*batch_size_Q:].float().cuda()
@@ -575,7 +589,7 @@ class Agent_Dataset(Dataset):
         
         for i in range(total_iter):
             states_next_gpu=states_next[i*batch_size_Q:(i+1)*batch_size_Q].float().cuda(1)
-            Q_values_next_max=Q_values_next_max+list(self.agent_target.DQN.forward(states_next_gpu))
+            Q_values_next_max=Q_values_next_max+list(self.agent_target.DQN.forward(states_next_gpu).detach().cpu())
         
         #pdb.set_trace()
 # =============================================================================
@@ -616,7 +630,7 @@ class Agent_Dataset(Dataset):
 
 
 
-def train_DQN(agent,agent_data, criterion, total_replays,batch_size,opt):
+def train_DQN(agent,agent_data, criterion, epochs,batch_size,opt):
     
     
     opt.zero_grad()
@@ -626,9 +640,9 @@ def train_DQN(agent,agent_data, criterion, total_replays,batch_size,opt):
     
     
     #pdb.set_trace()
-    for replay in range(total_replays):
-        X,Y=agent_data.__getitem__() # index value is not used 
-        pdb.set_trace()
+    X,Y=agent_data.__getitem__() # index value is not used 
+    for epoch in range(epochs):  
+        #pdb.set_trace()
         n_of_batches=len(X)//batch_size
         #print(f'replay: {replay}')
         agent.run_type='train'
@@ -644,6 +658,8 @@ def train_DQN(agent,agent_data, criterion, total_replays,batch_size,opt):
             
             loss = criterion(outputs,y)
             loss.backward()
+            progressBar(epoch, b, n_of_batches)
+            #print(f'Epoch={epoch} : {progressBar(b, n_of_batches)}')
             #pdb.set_trace()
             #print(f'        sample: {outputs[0]}    loss: {loss.detach().cpu().numpy().round(2)}')
             
@@ -723,29 +739,35 @@ def save_object(obj,filename):
 if __name__ == "j":
 
     #loading the saved s_net
-    
+    pdb.set_trace()
     s_net=load_model(file_path='/home/mpcr/Adam_python/Rover/gray19_noweights')
     s_net.cuda()
     s_net.eval()
     
     #location of Q_agent data
-    all_filenames=os.listdir('/home/mpcr/Adam_python/Rover/Q_agent_data_resized')
+    
+    Q_data_path='/home/mpcr/Adam_python/Rover/Q_data_gen0_resized/'
+    all_filenames=os.listdir(Q_data_path)
 
     #either load previous Q_agent or create one
     
-    Agent=Q_Agent(epsilon=.95,gamma=.9,learning_rate=.0001)
+    Agent=Q_Agent(epsilon=.9,gamma=.9,learning_rate=.0001)
     Agent.run_type='eval'
     
-    #Agent.load_Q_agent('filename')
+    Agent.load_Q_agent('generation_0')
     
     
     path='/home/mpcr/Adam_python/Rover/Q_agent_data_resized/'
+    
+    
+    replay_size=10000
+    
+    
+    all_data=MDP_dataset_new(agent=Agent,s_net=s_net,path=Q_data_path,replay_size=replay_size)
 
-    all_data=MDP_dataset_new(agent=Agent,s_net=s_net,path=path,replay_size='sfasj')
 
     
-    replay_size=400
-    training_batch_size=40 #batch_size should be a factor of replay_size
+    training_batch_size=100 #batch_size should be a factor of replay_size
     data_loader=DataLoader(dataset=all_data,batch_size=replay_size,shuffle=True)
     
     
@@ -755,8 +777,8 @@ if __name__ == "j":
     
     #criterion=torch.nn.CrossEntropyLoss()  
     criterion=torch.nn.MSELoss()  
-    
-    train_DQN(agent=Agent,agent_data=agent_data,criterion=criterion,total_replays=5,batch_size=training_batch_size,opt=sample_agent.opt)
+    pdb.set_trace()
+    train_DQN(agent=Agent,agent_data=agent_data,criterion=criterion,epochs=10,batch_size=training_batch_size,opt=Agent.opt)
     
 
     
@@ -790,7 +812,6 @@ if __name__ == "j":
 #     f.close()
 #     
 # =============================================================================
-
 
 
 
