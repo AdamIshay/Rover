@@ -70,6 +70,10 @@ import pickle
 # 
 # =============================================================================
 
+#if still having issues with backwards motion too often, heavily punish choosing 
+#reverse, more than others
+
+
 def progressBar(epoch, value, endvalue, bar_length=20):
 
         percent = float(value) / endvalue
@@ -155,16 +159,13 @@ def get_supervised_rewards(s_net,path):
         f=h5py.File(path + file, 'r')
         frame_accum_w_end.append(f['X'].shape[0]+frame_accum_w_end[-1])
         f.close()
-        
-        
-        
-        
+
         frame_accum=np.array(frame_accum)
         frame_accum_w_end=np.array(frame_accum_w_end)
         
         total_frames=frame_accum[-1]-len(filenames)
 
-    pdb.set_trace()
+
 
 
 
@@ -208,14 +209,6 @@ class MDP_dataset_new(Dataset):
         
         self.total_frames=self.frame_accum[-1]-len(self.filenames)
         self.progress_counter=0
-# =============================================================================
-#     def get_rewards(self):
-#         Q_data_path='/home/mpcr/Adam_python/Rover/Q_agent_data_resized/'
-#         
-#         
-#         Q_filenames=os.listdir(Q_data_path)
-#         
-# =============================================================================
         
         
     def get_frame_location(self,index,frame_array):
@@ -265,9 +258,9 @@ class MDP_dataset_new(Dataset):
     def get_reward(self,action,label):
         
         if action==label:
-            return 3
+            return 1
         else:
-            return -.8
+            return -.85
         
     
     def __len__(self):
@@ -298,116 +291,6 @@ class MDP_dataset_new(Dataset):
         self.index_list.append(index)
         
         return mdp_list
-
-
-
-
-
-
-
-class MDP_dataset(Dataset):
-    'MDP dataset which takes in filenames '
-    def __init__(self,filenames,agent,s_net):
-        #pdb.set_trace()
-        #self.filenames=np.array(os.listdir('/home/mpcr/Right2'))
-        self.filenames=np.array(filenames)
-        self.agent=agent
-        self.binarizer=preprocessing.LabelBinarizer()
-        self.binarizer.fit([-1.0,0.0,1.0,2.0])
-        self.s_net=s_net
-        frame_accum=[0]
-        frame_accum_w_end=[0]
-        
-        for file in self.filenames:
-            f=h5py.File('/home/mpcr/Right2/' + file, 'r')
-            frame_accum.append(f['X'].shape[0]+frame_accum[-1]-1)
-            f.close()
-        #frame_accum= np.delete(frame_accum,0)
-        
-        for file in self.filenames:
-            f=h5py.File('/home/mpcr/Right2/' + file, 'r')
-            frame_accum_w_end.append(f['X'].shape[0]+frame_accum_w_end[-1])
-            f.close()
-        
-        
-        
-        
-        self.frame_accum=np.array(frame_accum)
-        self.frame_accum_w_end=np.array(frame_accum_w_end)
-        
-        self.total_frames=self.frame_accum[-1]-len(self.filenames)
-
-
-
-
-
-    def get_sample_state(self,index,frame_array):
-        
-        #pdb.set_trace()
-        
-        files_less=1*(index>=frame_array)
-        
-        file_location=np.max(np.where(files_less==1))
-
-        index_in_file=index-frame_array[file_location]
-
-        f=h5py.File('/home/mpcr/Right2/' + self.filenames[file_location], 'r')
-        #a_group_key = list(f.keys())[0]
-        
-        X=f['X'][index_in_file]
-        label=f['Y'][index_in_file]
-        f.close()
-        X=resize(X,(224,224,3))
-        X=np.transpose(X,(2,0,1))
-
-        
-        return X,label
-
-        
-    
-    def get_state_next_state(self,index):
-        
-        #pdb.set_trace()
-        state,label=self.get_sample_state(index,self.frame_accum)
-        
-        next_state,next_label=self.get_sample_state(index+1,self.frame_accum_w_end)
-        
-        return state,label,next_state
-        
-    def get_reward(self,action,label):
-        
-        if action==label:
-            return 1
-        else:
-            return 0
-        
-    
-    def __len__(self):
-        'Denotes the total number of samples'
-        return self.total_frames
-
-    def __getitem__(self, index):
-        'Generates one sample of data'
-        # Select sample
-        #pdb.set_trace()
-        
-        state,label,next_state=self.get_state_next_state(index)
-        
-        s_action_values=self.s_net.forward(torch.from_numpy(state).unsqueeze_(0).type(torch.cuda.FloatTensor))
-        s_action_values=torch.tensor(s_action_values.data,requires_grad=False)
-        s_action=s_action_values.argmax().data.tolist()
-        
-        action_values=self.agent.forward(torch.from_numpy(state).unsqueeze_(0).type(torch.cuda.FloatTensor))
-        action_values=torch.tensor(action_values.data,requires_grad=False)
-        action=action_values.argmax().data.tolist()
-        
-        reward=self.get_reward(action,s_action)
-        
-        mdp_list=[state, action, next_state, reward]#,label, s_action_values,action_values]
-        
-        
-        return mdp_list
-
 
 
 
@@ -511,26 +394,20 @@ class Agent_Dataset(Dataset):
         
         self.data_loader=data_loader
         
+        self.mdp_data=self.create_replay_memory()
+        
     def create_replay_memory(self):
-# =============================================================================
-#         replay_memory=[]
-#         
-#         for i in range(self.len):
-#             replay_memory.append(next(iter(self.data_loader)))
-#         
-#         return replay_memory
-# =============================================================================
         return next(iter(self.data_loader))
     
     def update_target(self):
         self.agent_target=copy.deepcopy(self.agent)
-        self.agent_target.cuda(1)
+        self.agent_target.DQN.cuda(1)
         return None
     
     
-    def format_Q_data(self):
+    def format_Q_data(self,index):
         
-        pdb.set_trace()
+        #pdb.set_trace()
         self.agent.run_type='eval'
         self.agent.DQN.eval()
         self.agent_target.DQN.eval()
@@ -538,17 +415,17 @@ class Agent_Dataset(Dataset):
         
         
         #get replay memory ~50k MDP lists
-        mdp_data=self.create_replay_memory()
+        #mdp_data=self.create_replay_memory()
         
         
         #mdp_data=create_replay_memory(data_loader=self.data_loader, size=self.len)
         
-        chosen_actions=mdp_data[1]
-        rewards=mdp_data[3]
+        chosen_actions=self.mdp_data[1][index]
+        rewards=self.mdp_data[3][index]
         #rewards=np.array(self.agent.memory[:,3],dtype=np.float32)
         
-        states=mdp_data[0]
-        states_next=mdp_data[2]
+        states=self.mdp_data[0][index]
+        states_next=self.mdp_data[2][index]
         
         total_states=len(states)
         
@@ -558,10 +435,17 @@ class Agent_Dataset(Dataset):
         leftover=total_states%batch_size_Q
         
         Q_values=[]
-        #pdb.set_trace()
-        for i in range(total_iter):
-            states_gpu=states[i*batch_size_Q:(i+1)*batch_size_Q].float().cuda()
-            Q_values=Q_values+list(self.agent.DQN.forward(states_gpu).detach().cpu())
+
+        
+# =============================================================================
+#         for i in range(total_iter):
+#             states_gpu=states[i*batch_size_Q:(i+1)*batch_size_Q].float().cuda()
+#             Q_values=Q_values+list(self.agent.DQN.forward(states_gpu).detach().cpu())
+# =============================================================================
+        
+        
+        states_gpu=states.view(1,1,75,100).float().cuda()
+        Q_values=list(self.agent.DQN.forward(states_gpu).detach().cpu())
         
 # =============================================================================
 #         states_gpu=states[(i+1)*batch_size_Q:].float().cuda()
@@ -570,36 +454,17 @@ class Agent_Dataset(Dataset):
         
         del states_gpu
         
-        
-        #boards_unrolled_next=np.hstack(self.agent.memory[:,2]).T
-        #boards_unrolled_next=torch.tensor(boards_unrolled_next,dtype=torch.float32)
-        
-        #Q_values=self.agent.agent.forward(boards_unrolled) # batch_size x 7
-        
-        
         Q_values=torch.stack(Q_values)
         target_Q_values=Q_values.clone().cpu()
         
         #set all target q-values the same as predicted, except for the action selected, to only backpropogate for selected action
         
-# =============================================================================
-#         below needs to be changed to run through target network 
-# =============================================================================
         Q_values_next_max=[]
         
-        for i in range(total_iter):
-            states_next_gpu=states_next[i*batch_size_Q:(i+1)*batch_size_Q].float().cuda(1)
-            Q_values_next_max=Q_values_next_max+list(self.agent_target.DQN.forward(states_next_gpu).detach().cpu())
         
-        #pdb.set_trace()
-# =============================================================================
-#         states_next_gpu=states_next[(i+1)*batch_size_Q:].float().cuda()
-#         Q_values_next_max=Q_values_next_max+list(self.agent.DQN.forward(states_next_gpu))
-# =============================================================================
+        states_next_gpu=states_next.view(1,1,75,100).float().cuda(1)
+        Q_values_next_max=list(self.agent_target.DQN.forward(states_next_gpu).detach().cpu())
         
-        
-        #Q_value_next_max=self.agent.agent.forward(boards_unrolled_next).max(dim=1)[0]
-        #Q_value_next_max=self.agent_target.forward(boards_unrolled_next).max(dim=1)[0]
         
         Q_values_next_max=Variable(torch.stack(Q_values_next_max).data,requires_grad=False)
         
@@ -609,7 +474,7 @@ class Agent_Dataset(Dataset):
         
 
         target_Q_value=rewards.float()+self.agent.gamma*Q_value_next_max.cpu()
-        target_Q_values[np.arange(len(chosen_actions_np)),chosen_actions_np.astype(np.int)]= target_Q_value
+        target_Q_values[0,chosen_actions_np.astype(np.int).item()]= target_Q_value
         target_Q_values=Variable(target_Q_values.data,requires_grad=False)
         
         self.X=states
@@ -621,16 +486,16 @@ class Agent_Dataset(Dataset):
         'Denotes the total number of samples'
         return self.len
 
-    def __getitem__(self):
+    def __getitem__(self,index):
         'Gets replay_memory sized batch from the MDP list'
         # Select sample
-        self.format_Q_data()
+        self.format_Q_data(index)
         return self.X, self.target_Q_values
         #return self.X[index],self.target_Q_values[index]
 
 
 
-def train_DQN(agent,agent_data, criterion, epochs,batch_size,opt):
+def train_DQN(agent,Q_data_loader,agent_data, criterion, epochs,batch_size,opt,target_update):
     
     
     opt.zero_grad()
@@ -640,53 +505,38 @@ def train_DQN(agent,agent_data, criterion, epochs,batch_size,opt):
     
     
     #pdb.set_trace()
-    X,Y=agent_data.__getitem__() # index value is not used 
+    #X,Y=agent_data.__getitem__() # index value is not used 
     for epoch in range(epochs):  
         #pdb.set_trace()
-        n_of_batches=len(X)//batch_size
+        n_of_batches=agent_data.len//batch_size
         #print(f'replay: {replay}')
         agent.run_type='train'
         agent.DQN.train()
         
-        for b in range(n_of_batches):
+        for i_batch,batch in enumerate(Q_data_loader):
+            total_batches=epoch*n_of_batches + i_batch
+            #pdb.set_trace()
+            #target update
+            if total_batches%target_update==0:
+                agent_data.update_target()
+                
             
             opt.zero_grad()
             
-            x=X[b*batch_size:(b+1)*batch_size].float().cuda()
-            y=Y[b*batch_size:(b+1)*batch_size].float().cuda()
+            x=batch[0].float().cuda()
+            y=batch[1].view(batch_size, 4).float().cuda()
             outputs=agent.DQN.forward(x)
             
             loss = criterion(outputs,y)
             loss.backward()
-            progressBar(epoch, b, n_of_batches)
+            progressBar(epoch, i_batch, n_of_batches)
             #print(f'Epoch={epoch} : {progressBar(b, n_of_batches)}')
             #pdb.set_trace()
             #print(f'        sample: {outputs[0]}    loss: {loss.detach().cpu().numpy().round(2)}')
             
             
             opt.step()
-            
-# =============================================================================
-#         opt.zero_grad()
-#         
-#         x=X[(b+1)*batch_size:].float().cuda()
-#         y=Y[(b+1)*batch_size:].float().cuda()
-#         
-#         outputs=agent.DQN.forward(x)
-#         
-#         loss = criterion(outputs,y)
-#         loss.backward()
-#         opt.step()
-# =============================================================================
-        
-        
-
-
-
-
-
-
-
+    return None
 
 
 
@@ -736,10 +586,10 @@ def save_object(obj,filename):
 
 
 
-if __name__ == "j":
+if __name__ == "__main__":
 
     #loading the saved s_net
-    pdb.set_trace()
+    #pdb.set_trace()
     s_net=load_model(file_path='/home/mpcr/Adam_python/Rover/gray19_noweights')
     s_net.cuda()
     s_net.eval()
@@ -757,35 +607,41 @@ if __name__ == "j":
     Agent.load_Q_agent('generation_0')
     
     
-    path='/home/mpcr/Adam_python/Rover/Q_agent_data_resized/'
+    #path='/home/mpcr/Adam_python/Rover/Q_agent_data_resized/'
     
     
-    replay_size=10000
+    replay_size=30000
     
-    
+    #replay memory only stored in mdp_dataset_new
     all_data=MDP_dataset_new(agent=Agent,s_net=s_net,path=Q_data_path,replay_size=replay_size)
 
 
     
     training_batch_size=100 #batch_size should be a factor of replay_size
-    data_loader=DataLoader(dataset=all_data,batch_size=replay_size,shuffle=True)
+    
+    #batch_size of data_loader should be ~32, the size of this will limit how frequent update_target will take effect
+    batch_size=100
+    mdp_data_loader=DataLoader(dataset=all_data,batch_size=replay_size,shuffle=True) 
     
     
-    agent_data=Agent_Dataset(agent=Agent,data_loader=data_loader,replay_size=replay_size) #
+    agent_data=Agent_Dataset(agent=Agent,data_loader=mdp_data_loader,replay_size=replay_size) #
     
-
+    Q_data_loader=DataLoader(dataset=agent_data,batch_size=batch_size,shuffle=True)
+    
+    
+    
+    #O=next(iter(Q_data_loader))
     
     #criterion=torch.nn.CrossEntropyLoss()  
-    criterion=torch.nn.MSELoss()  
-    pdb.set_trace()
-    train_DQN(agent=Agent,agent_data=agent_data,criterion=criterion,epochs=10,batch_size=training_batch_size,opt=Agent.opt)
+    criterion=torch.nn.MSELoss()
+    #pdb.set_trace()
+    train_DQN(agent=Agent,Q_data_loader=Q_data_loader, agent_data=agent_data,criterion=criterion,epochs=15,batch_size=training_batch_size,opt=Agent.opt,target_update=4)
+    
+
+    Agent.save_Q_agent('generation_1_15epoch_4update_p0001LR_30ksize')
     
 
     
-    
-
-
-
 
 
 #cut first 5 images and labels off to get rid of black frames
@@ -814,8 +670,6 @@ if __name__ == "j":
 # =============================================================================
 
 
-
-#epsilon_greedy not being used? 
     
 #gray and then resize is faster 
     
